@@ -7,8 +7,12 @@
 	"authors": [
 		"Conde"
 	],
-	"contact": {},
-	"license": "CC0-1.0",
+	"contact": {
+		"homepage": "https://modrinth.com/mod/worlds-end",
+		"sources": "https://github.com/Conde-Bond/worlds-end",
+		"issues": "https://github.com/Conde-Bond/worlds-end/issues"
+	},
+	"license": "MIT",
 	"icon": "assets/worlds-end/icon.png",
 	"environment": "*",
 	"entrypoints": {
