@@ -1,5 +1,6 @@
 package com.example.worldsend;
 
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
@@ -40,10 +41,11 @@ public class WorldsEndMod implements ModInitializer {
                         .build(DriftingBlockEntity.typeKey())
         );
 
-        // 2. Static state (animation pool, wipe queues, boss bars) belongs to
-        //    the JVM, not the world — reset it whenever a server starts, or
-        //    it leaks stale data between singleplayer worlds.
+        // 2. On server start: load the config (so edits apply per world
+        //    open), then reset all JVM-scoped static state — it belongs to
+        //    the JVM, not the world, and leaks between singleplayer worlds.
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            WorldsEndConfig.load();
             DriftingBlockEntity.resetPool();
             ShrinkController.reset();
         });
@@ -67,7 +69,8 @@ public class WorldsEndMod implements ModInitializer {
 
             if (state.isActive()) {
                 if (overworld.getGameTime() % 100 == 0) {
-                    LOGGER.info("World ending, radius = {}", state.radius());
+                    LOGGER.info("World ending, radius = {}{}", state.radius(),
+                            state.isPaused() ? " (paused)" : "");
                 }
                 ShrinkController.tick(overworld, state);
             }
@@ -97,14 +100,86 @@ public class WorldsEndMod implements ModInitializer {
             }
         });
 
-        // 6. Debug trigger: /worldsend start
+        // 6. Commands: /worldsend start | pause | resume | radius <blocks>
+        //    The whole tree is gated at permission level 2 (ops / cheats).
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             dispatcher.register(Commands.literal("worldsend")
+                    .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                     .then(Commands.literal("start").executes(ctx -> {
                         ServerLevel overworld = ctx.getSource().getServer().overworld();
+                        EndOfWorldState state = EndOfWorldState.get(overworld);
+                        if (state.isActive()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                    "The end of the world is already underway."));
+                            return 0;
+                        }
                         startTheEnd(overworld);
                         return 1;
-                    })));
+                    }))
+                    .then(Commands.literal("pause").executes(ctx -> {
+                        ServerLevel overworld = ctx.getSource().getServer().overworld();
+                        EndOfWorldState state = EndOfWorldState.get(overworld);
+                        if (!state.isActive()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                    "The end of the world has not started."));
+                            return 0;
+                        }
+                        if (state.isPaused()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                    "The border is already paused."));
+                            return 0;
+                        }
+                        state.setPaused(true);
+                        ctx.getSource().sendSuccess(() -> Component.literal(String.format(
+                                "Border paused at radius %,.0f.", state.radius())), true);
+                        return 1;
+                    }))
+                    .then(Commands.literal("resume").executes(ctx -> {
+                        ServerLevel overworld = ctx.getSource().getServer().overworld();
+                        EndOfWorldState state = EndOfWorldState.get(overworld);
+                        if (!state.isActive()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                    "The end of the world has not started."));
+                            return 0;
+                        }
+                        if (!state.isPaused()) {
+                            ctx.getSource().sendFailure(Component.literal(
+                                    "The border is not paused."));
+                            return 0;
+                        }
+                        state.setPaused(false);
+                        ctx.getSource().sendSuccess(() -> Component.literal(
+                                "Border resumed."), true);
+                        return 1;
+                    }))
+                    .then(Commands.literal("radius")
+                            .then(Commands.argument("blocks", DoubleArgumentType.doubleArg(0.0))
+                                    .executes(ctx -> {
+                                        double target = DoubleArgumentType.getDouble(ctx, "blocks");
+                                        ServerLevel overworld = ctx.getSource().getServer().overworld();
+                                        EndOfWorldState state = EndOfWorldState.get(overworld);
+
+                                        // Setting a radius implies destruction
+                                        // outside it, so it also starts the end.
+                                        if (!state.isActive()) {
+                                            startTheEnd(overworld);
+                                        }
+
+                                        // Shrink-only: everything beyond the current
+                                        // radius is already gone, so growing it would
+                                        // just expose deleted terrain.
+                                        if (target > state.radius()) {
+                                            ctx.getSource().sendFailure(Component.literal(String.format(
+                                                    "The border can only shrink. Current radius is %,.0f; cannot grow to %,.0f.",
+                                                    state.radius(), target)));
+                                            return 0;
+                                        }
+
+                                        state.setRadius(target);
+                                        ctx.getSource().sendSuccess(() -> Component.literal(String.format(
+                                                "Border radius set to %,.0f blocks.", target)), true);
+                                        return 1;
+                                    }))));
         });
 
         ServerEntityEvents.ENTITY_UNLOAD.register((entity, level) -> {

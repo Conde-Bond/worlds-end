@@ -19,13 +19,6 @@
 			"com.example.worldsend.client.WorldsEndClient"
 		]
 	},
-	"mixins": [
-		"worlds-end.mixins.json",
-		{
-			"config": "worlds-end.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.19.3",
 		"minecraft": "~26.2",

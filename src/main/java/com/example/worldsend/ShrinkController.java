@@ -89,8 +89,11 @@ public final class ShrinkController {
         updateBossBars(level, state, cx, cz);
 
         // ---- Layer 1: the shrinking ring, discovered around players -------
+        // Paused freezes only this layer: the border stops moving, but the
+        // wipe queue and audit below keep erasing anything already outside
+        // the frozen radius (e.g. chunks loading in past the wall).
         double rOld = state.radius();
-        if (rOld > 0) {
+        if (rOld > 0 && !state.isPaused()) {
             double rNew = Math.max(0.0, rOld - EndOfWorldState.shrinkPerTick(rOld));
 
             Map<ChunkPos, LevelChunk> candidates = new HashMap<>();
@@ -120,7 +123,9 @@ public final class ShrinkController {
                         int x = baseX + lx;
                         int z = baseZ + lz;
                         double dist = Math.hypot(x + 0.5 - cx, z + 0.5 - cz);
-                        if (dist > rNew && dist <= rOld) {
+                        // rNew <= 0: border fully collapsed — nothing survives,
+                        // including the exact-center column whose dist is 0.0.
+                        if ((dist > rNew || rNew <= 0) && dist <= rOld) {
                             band.add(new Column(entry.getValue(), x, z, dist));
                         }
                     }
@@ -202,9 +207,14 @@ public final class ShrinkController {
                 bar.addPlayer(player);
             }
 
-            String text = remaining > 0
-                    ? String.format("The End is %,d blocks away", (long) remaining)
-                    : "The End is here";
+            String text;
+            if (remaining <= 0) {
+                text = "The End is here";
+            } else if (state.isPaused()) {
+                text = String.format("The End is %,d blocks away (paused)", (long) remaining);
+            } else {
+                text = String.format("The End is %,d blocks away", (long) remaining);
+            }
             if (!bar.getName().getString().equals(text)) {
                 bar.setName(Component.literal(text));
             }
@@ -318,7 +328,10 @@ public final class ShrinkController {
                     int x = baseX + lx;
                     int z = baseZ + lz;
                     double dist = Math.hypot(x + 0.5 - cx, z + 0.5 - cz);
-                    if (dist <= r) continue;
+                    // r <= 0 means the border has collapsed: wipe everything,
+                    // including the center column (dist 0.0 == r 0.0 otherwise
+                    // survives the strict comparison forever).
+                    if (r > 0 && dist <= r) continue;
 
                     ServerPlayer viewer = animationsLeft > 0
                             ? nearestPlayer(level, x + 0.5, z + 0.5) : null;

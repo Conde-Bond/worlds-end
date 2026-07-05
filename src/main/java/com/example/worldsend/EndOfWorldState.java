@@ -10,42 +10,28 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 /**
  * Persistent state for the shrinking border.
  *
- * The border starts at the world edge and shrinks according to a speed
- * schedule keyed on the current radius. Thanks to lazy deletion, a huge
- * radius costs nothing — the radius is just a number until it reaches
- * loaded chunks, where the ring sweep and wipe layers enforce it.
+ * The border starts at the world edge and shrinks according to the speed
+ * schedule in the config file (config/worlds-end.json). Thanks to lazy
+ * deletion, a huge radius costs nothing — the radius is just a number until
+ * it reaches loaded chunks, where the ring sweep and wipe layers enforce it.
+ *
+ * "paused" freezes the border's movement only; chunks outside the frozen
+ * radius are still wiped when observed (see ShrinkController).
  */
 public class EndOfWorldState extends SavedData {
 
-    // ---- Tuning ----------------------------------------------------------
     /** Starting radius: the world border (~30 million blocks from origin). */
     public static final double START_RADIUS = 30_000_000.0;
 
-    /**
-     * Speed schedule: { radius above which this speed applies, blocks/tick }.
-     * Rows must be in descending radius order. Handy conversion for tuning:
-     * minutes to cross a range = distance / speed / 1200.
-     * Default Values:
-     * { 1_000_000, 500.0  },
-     * {   100_000,  50.0  },
-     * {    10_000,   5.0  },
-     * {     2_000,   0.5  },
-     * {         0,   0.05 },
-     */
-    private static final double[][] SPEED_SCHEDULE = {
-            { 1_000_000, 50000.0  },  // 30M -> 1M   : ~48 min
-            {   100_000,  500.0  },  // 1M  -> 100k : ~15 min
-            {    10_000,   50.0  },  // 100k-> 10k  : ~15 min
-            {     2_000,   5.0  },  // 10k -> 2k   : ~13 min
-            {         0,   0.05 }, // 2k  -> 0    : ~33 min (the endgame; tune!)
-    };
-    // -----------------------------------------------------------------------
-
     private boolean active;
+    private boolean paused;
     private double radius;
 
+    // "paused" is optional so saved data from before the field existed
+    // still decodes (older test worlds only have active + radius).
     public static final Codec<EndOfWorldState> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.BOOL.fieldOf("active").forGetter(s -> s.active),
+            Codec.BOOL.optionalFieldOf("paused", false).forGetter(s -> s.paused),
             Codec.DOUBLE.fieldOf("radius").forGetter(s -> s.radius)
     ).apply(i, EndOfWorldState::new));
 
@@ -54,11 +40,12 @@ public class EndOfWorldState extends SavedData {
                     EndOfWorldState::new, CODEC, null);
 
     public EndOfWorldState() {
-        this(false, START_RADIUS);
+        this(false, false, START_RADIUS);
     }
 
-    private EndOfWorldState(boolean active, double radius) {
+    private EndOfWorldState(boolean active, boolean paused, double radius) {
         this.active = active;
+        this.paused = paused;
         this.radius = radius;
     }
 
@@ -66,23 +53,37 @@ public class EndOfWorldState extends SavedData {
         return overworld.getDataStorage().computeIfAbsent(TYPE);
     }
 
-    /** Current shrink speed in blocks/tick, given a radius. */
+    /** Current shrink speed in blocks/tick for a radius, from the config. */
     public static double shrinkPerTick(double radius) {
-        for (double[] entry : SPEED_SCHEDULE) {
-            if (radius > entry[0]) {
-                return entry[1];
+        WorldsEndConfig config = WorldsEndConfig.get();
+        for (WorldsEndConfig.SpeedStep step : config.speedSchedule) {
+            if (radius > step.aboveRadius) {
+                return step.blocksPerTick * config.speedMultiplier;
             }
         }
-        return SPEED_SCHEDULE[SPEED_SCHEDULE.length - 1][1];
+        // Radius at or below the smallest row: use the last (slowest) step.
+        WorldsEndConfig.SpeedStep last =
+                config.speedSchedule.get(config.speedSchedule.size() - 1);
+        return last.blocksPerTick * config.speedMultiplier;
     }
 
     public boolean isActive() {
         return active;
     }
 
+    public boolean isPaused() {
+        return paused;
+    }
+
     public void begin() {
         this.active = true;
+        this.paused = false;
         this.radius = START_RADIUS;
+        setDirty();
+    }
+
+    public void setPaused(boolean paused) {
+        this.paused = paused;
         setDirty();
     }
 
