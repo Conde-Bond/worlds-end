@@ -2,7 +2,7 @@
 
 A Fabric mod for Minecraft 26.2. When the Ender Dragon dies, a giant circle centered on world spawn (the entire world, 60 million blocks across) starts shrinking, deleting everything outside of it. Blocks near players break off and drift away into the sky while a boss bar counts down how far the edge is. With the default settings it takes a bit over 2 hours to reach spawn, and once it's done the overworld is just void.
 
-Downloads are on [Modrinth](https://modrinth.com/mod/worlds-end) and CurseForge.
+Downloads are on [Modrinth](https://modrinth.com/mod/worlds-end) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/worlds-end).
 
 ## ⚠️ Warning
 
